@@ -27,7 +27,9 @@ renderer.info.autoReset=false;
 renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.shadowMap.autoUpdate=false;
 world.appendChild(renderer.domElement);
 const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=!mobile;controls.dampingFactor=.18;controls.rotateSpeed=.6;controls.zoomSpeed=.9;
-controls.minDistance=1.5;controls.maxDistance=55;controls.maxPolarAngle=Math.PI*.485;controls.minPolarAngle=.08;controls.screenSpacePanning=true;
+function homeScale(){return Math.max(1,1/camera.aspect);}
+function fitOrbitRange(){controls.maxDistance=Math.max(55,35*homeScale()+2);}
+controls.minDistance=1.5;fitOrbitRange();controls.maxPolarAngle=Math.PI*.485;controls.minPolarAngle=.08;controls.screenSpacePanning=true;
 const hemi=new THREE.HemisphereLight('#fff9ed','#998a72',2);scene.add(hemi);
 const sun=new THREE.DirectionalLight('#ffdfaf',3);sun.castShadow=true;sun.shadow.mapSize.set(mobile?1024:2048,mobile?1024:2048);Object.assign(sun.shadow.camera,{left:-12,right:12,top:12,bottom:-12,near:1,far:65});sun.shadow.bias=-.0003;sun.shadow.normalBias=.025;sun.shadow.radius=2;scene.add(sun,sun.target);
 const fill=new THREE.DirectionalLight('#dce5ed',1);fill.position.set(-10,12,8);scene.add(fill);
@@ -62,7 +64,7 @@ function setEditing(value){if(drag)finishDrag(true);editing=value;document.body.
 function showRoof(value){roofs.forEach(o=>o.visible=value);document.body.classList.toggle('interior',value);$('#scene-status').textContent=value?'室内近看 · 完整封顶':'真实空间 · 完整墙体';invalidate(true);}
 const presets={living:{target:[8.0,1.1,-3.1],position:[8.1,1.7,-.7]},dining:{target:[8.5,1.1,-7.2],position:[10.4,1.75,-5.25]},study:{target:[3.4,1.1,-7.8],position:[5.6,1.7,-6.2]},bedroom:{target:[10.6,1.0,-9.3],position:[8.9,1.6,-8.0]}};
 function goView(name){if(!ready)return;let p,t;
- if(name==='home'){showRoof(false);t=new THREE.Vector3(0,.4,0);const scale=Math.max(1,.85/camera.aspect);p=new THREE.Vector3(12,28,16).multiplyScalar(scale);controls.maxPolarAngle=Math.PI*.485;}
+ if(name==='home'){showRoof(false);t=new THREE.Vector3(0,.4,0);p=new THREE.Vector3(12,28,16).multiplyScalar(homeScale());controls.maxPolarAngle=Math.PI*.485;}
  else{if(editing)setEditing(false);showRoof(true);const labels={living:'客厅',dining:'餐厨',study:'书房',bedroom:'主卧'};const v=manifest.cameras?.['呈现｜室内'+labels[name]]||presets[name];p=new THREE.Vector3(...v.position).sub(center);t=new THREE.Vector3(...v.target).sub(center);controls.maxPolarAngle=Math.PI*.82;}
  tween={start:performance.now(),from:camera.position.clone(),targetFrom:controls.target.clone(),p,t};$('.view.active')?.classList.remove('active');$(`[data-view="${name}"]`)?.classList.add('active');invalidate();}
 controls.addEventListener('start',()=>{controlActive=true;tween=null;invalidate();});controls.addEventListener('end',()=>{controlActive=false;invalidate();});controls.addEventListener('change',()=>invalidate());
@@ -123,7 +125,7 @@ function setTime(hour){$('#clock').textContent=hourLabel(hour);const d=new Date(
  scene.background.set('#eeeae3').lerp(new THREE.Color('#b4b4b8'),1-day);ground.material.color.copy(scene.background);document.body.classList.toggle('night',day<.2);sun.updateMatrixWorld();sun.target.updateMatrixWorld();sceneSyncs++;invalidate(true);
 }
 $('#time').oninput=e=>{if(!logicOptimized)return setTime(Number(e.target.value));queuedTime=Number(e.target.value);$('#clock').textContent=hourLabel(queuedTime);pump?.wake();};
-function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderRatio=Math.min(devicePixelRatio,mobile?1.25:1.5,Math.sqrt((mobile?750000:2400000)/(innerWidth*innerHeight)));renderer.setPixelRatio(renderRatio);renderer.setSize(innerWidth,innerHeight);composer?.setPixelRatio(renderRatio);composer?.setSize(innerWidth,innerHeight);invalidate();}window.addEventListener('resize',resize);
+function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();fitOrbitRange();renderRatio=Math.min(devicePixelRatio,mobile?1.25:1.5,Math.sqrt((mobile?750000:2400000)/(innerWidth*innerHeight)));renderer.setPixelRatio(renderRatio);renderer.setSize(innerWidth,innerHeight);composer?.setPixelRatio(renderRatio);composer?.setSize(innerWidth,innerHeight);invalidate();}window.addEventListener('resize',resize);
 async function load(){try{
  manifest=await (await fetch('./assets/manifest.json',{cache:'no-cache'})).json();
  let asset=mobile&&manifest.mobile?.source_asset_sha256===manifest.asset_sha256?manifest.mobile:null;
@@ -136,7 +138,7 @@ async function load(){try{
  for(const data of manifest.lights||[]){const light=new THREE.PointLight(new THREE.Color(...data.color),0,6,2);light.position.set(...data.position).sub(center);light.userData.nightIntensity=Math.min(30,data.night_energy*.18);lamps.push(light);scene.add(light);}
  const size=bounds.getSize(new THREE.Vector3());const base=new THREE.Mesh(new THREE.BoxGeometry(size.x+.15,.11,size.z+.15),new THREE.MeshStandardMaterial({color:'#827462',roughness:.8}));base.position.y=-.085;base.receiveShadow=true;base.castShadow=true;scene.add(base);
  try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');applyTransforms(reconcileLayout(saved,roots.map(o=>o.userData.furniture_id)));if(saved?.source&&saved.source!==manifest.source_sha256)toast('模型已更新，已保留匹配家具的布局');}catch{toast('本机布局未能读取，已使用设计原位');}
- showRoof(false);setTime(13);controls.target.set(0,.4,0);camera.position.set(12,28,16).multiplyScalar(Math.max(1,.85/camera.aspect));updateControls();$('#load-text').textContent='整理光线与材质…';$('#load-progress').style.width='88%';await renderer.compileAsync(scene,camera);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();for(const lamp of lamps)lamp.visible=true;await renderer.compileAsync(scene,camera);renderer.render(scene,camera);composer?.render();setTime(13);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();if(logicOptimized){model.traverse(o=>{if(!roots.includes(o)){o.updateMatrix();o.matrixAutoUpdate=false;}});scene.updateMatrixWorld(true);scene.matrixWorldAutoUpdate=false;}ready=true;$('#load-progress').style.width='100%';$('#loading').classList.add('done');setTimeout(()=>$('#loading').hidden=true,600);invalidate(true);
+ showRoof(false);setTime(13);controls.target.set(0,.4,0);camera.position.set(12,28,16).multiplyScalar(homeScale());updateControls();$('#load-text').textContent='整理光线与材质…';$('#load-progress').style.width='88%';await renderer.compileAsync(scene,camera);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();for(const lamp of lamps)lamp.visible=true;await renderer.compileAsync(scene,camera);renderer.render(scene,camera);composer?.render();setTime(13);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();if(logicOptimized){model.traverse(o=>{if(!roots.includes(o)){o.updateMatrix();o.matrixAutoUpdate=false;}});scene.updateMatrixWorld(true);scene.matrixWorldAutoUpdate=false;}ready=true;$('#load-progress').style.width='100%';$('#loading').classList.add('done');setTimeout(()=>$('#loading').hidden=true,600);invalidate(true);
  }catch(e){console.error(e);$('#load-text').textContent='载入失败，请通过“打开房屋展示”入口重新打开。';$('#loading h2').textContent='暂时没能打开房屋';}}
 const perf=createPerf(renderer);
 function frame(now){if(document.hidden||!ready)return false;
