@@ -12,23 +12,26 @@ import {SMAAPass} from 'three/addons/postprocessing/SMAAPass.js';
 import * as SunCalc from './vendor/suncalc/index.js';
 import {STORAGE_KEY,overlap,reconcileLayout,hourLabel} from './layout.js';
 const $=s=>document.querySelector(s),world=$('#world');
+const mobile=new URLSearchParams(location.search).get('quality')==='mobile'||matchMedia('(pointer: coarse)').matches;
+document.body.classList.toggle('mobile-render',mobile);
+let renderRatio=Math.min(devicePixelRatio,mobile?1.25:1.5,Math.sqrt((mobile?750000:2400000)/(innerWidth*innerHeight)));
 const scene=new THREE.Scene();scene.background=new THREE.Color('#eeeae3');
 const camera=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,.05,200);
-const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
-renderer.setPixelRatio(Math.min(devicePixelRatio,1.5,Math.sqrt(2400000/(innerWidth*innerHeight))));
+const renderer=new THREE.WebGLRenderer({antialias:!mobile,powerPreference:'high-performance'});
+renderer.setPixelRatio(renderRatio);
 renderer.setSize(innerWidth,innerHeight);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
 renderer.info.autoReset=false;
 renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.shadowMap.autoUpdate=false;
 world.appendChild(renderer.domElement);
-const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.18;controls.rotateSpeed=.6;controls.zoomSpeed=.9;
+const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=!mobile;controls.dampingFactor=.18;controls.rotateSpeed=.6;controls.zoomSpeed=.9;
 controls.minDistance=1.5;controls.maxDistance=55;controls.maxPolarAngle=Math.PI*.485;controls.minPolarAngle=.08;controls.screenSpacePanning=true;
 const hemi=new THREE.HemisphereLight('#fff9ed','#998a72',2);scene.add(hemi);
-const sun=new THREE.DirectionalLight('#ffdfaf',3);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-12,right:12,top:12,bottom:-12,near:1,far:65});sun.shadow.bias=-.0003;sun.shadow.normalBias=.025;sun.shadow.radius=2;scene.add(sun,sun.target);
+const sun=new THREE.DirectionalLight('#ffdfaf',3);sun.castShadow=true;sun.shadow.mapSize.set(mobile?1024:2048,mobile?1024:2048);Object.assign(sun.shadow.camera,{left:-12,right:12,top:12,bottom:-12,near:1,far:65});sun.shadow.bias=-.0003;sun.shadow.normalBias=.025;sun.shadow.radius=2;scene.add(sun,sun.target);
 const fill=new THREE.DirectionalLight('#dce5ed',1);fill.position.set(-10,12,8);scene.add(fill);
 const pmrem=new THREE.PMREMGenerator(renderer);const env=new RoomEnvironment();scene.environment=pmrem.fromScene(env,.04).texture;env.dispose();pmrem.dispose();scene.environmentIntensity=.4;
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:'#e9e4db',roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.y=-.16;ground.receiveShadow=true;scene.add(ground);
-const composer=new EffectComposer(renderer);composer.addPass(new RenderPass(scene,camera));
-const ao=new GTAOPass(scene,camera,innerWidth,innerHeight);ao.output=GTAOPass.OUTPUT.Default;ao.updateGtaoMaterial({radius:.22,distanceExponent:1,thickness:.3,distanceFallOff:1,scale:1,samples:16});ao.blendIntensity=.35;composer.addPass(ao);composer.addPass(new OutputPass());composer.addPass(new SMAAPass());
+const composer=mobile?null:new EffectComposer(renderer);
+if(composer){composer.addPass(new RenderPass(scene,camera));const ao=new GTAOPass(scene,camera,innerWidth,innerHeight);ao.output=GTAOPass.OUTPUT.Default;ao.updateGtaoMaterial({radius:.22,distanceExponent:1,thickness:.3,distanceFallOff:1,scale:1,samples:16});ao.blendIntensity=.35;composer.addPass(ao);composer.addPass(new OutputPass());composer.addPass(new SMAAPass());}
 let model,manifest,center=new THREE.Vector3(),bounds,roots=[],meshes=[],roofs=[],walls=[],lamps=[],ready=false,editing=false,selected=null,drag=null,tween=null,dirty=true,lastInteraction=performance.now(),draws=0,renderIntervals=[],lastRender=0,needsSharp=true;
 const original=new Map(),undoStack=[];let storageOK=true;
 const localBounds=new Map();let controlActive=false,shadowDirty=true,lastShadow=0,pendingPointer=null,batchReport=null,pickMs=0,dragMs=0;
@@ -115,10 +118,11 @@ function setTime(hour){$('#clock').textContent=hourLabel(hour);const d=new Date(
  scene.background.set('#eeeae3').lerp(new THREE.Color('#b4b4b8'),1-day);ground.material.color.copy(scene.background);document.body.classList.toggle('night',day<.2);invalidate(true);
 }
 $('#time').oninput=e=>setTime(Number(e.target.value));
-function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);invalidate();}window.addEventListener('resize',resize);
+function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderRatio=Math.min(devicePixelRatio,mobile?1.25:1.5,Math.sqrt((mobile?750000:2400000)/(innerWidth*innerHeight)));renderer.setPixelRatio(renderRatio);renderer.setSize(innerWidth,innerHeight);composer?.setPixelRatio(renderRatio);composer?.setSize(innerWidth,innerHeight);invalidate();}window.addEventListener('resize',resize);
 async function load(){try{
  manifest=await (await fetch('./assets/manifest.json',{cache:'no-cache'})).json();
- const gltf=await new GLTFLoader().loadAsync('./assets/house-v24.glb?v='+manifest.asset_sha256,e=>{const ratio=Math.min(1,e.loaded/(manifest.asset_bytes||e.total||Infinity));$('#load-progress').style.width=`${5+ratio*70}%`;$('#load-text').textContent=ratio?`载入空间与材质 · ${Math.round(ratio*100)}%`:'正在载入空间…';});
+ const asset=mobile&&manifest.mobile?.source_asset_sha256===manifest.asset_sha256?manifest.mobile:null;
+ const gltf=await new GLTFLoader().loadAsync('./assets/'+(asset?.file||'house-v24.glb')+'?v='+(asset?.sha256||manifest.asset_sha256),e=>{const ratio=Math.min(1,e.loaded/(asset?.bytes||manifest.asset_bytes||e.total||Infinity));$('#load-progress').style.width=`${5+ratio*70}%`;$('#load-text').textContent=ratio?`载入空间与材质 · ${Math.round(ratio*100)}%`:'正在载入空间…';});
  model=gltf.scene;model.updateMatrixWorld(true);bounds=new THREE.Box3().setFromObject(model);center=bounds.getCenter(new THREE.Vector3());center.y=0;model.position.sub(center);scene.add(model);model.updateMatrixWorld(true);bounds.setFromObject(model);
  model.traverse(o=>{if(o.userData.furniture_id){roots.push(o);original.set(o.userData.furniture_id,transform(o));}if(o.isMesh){meshes.push(o);o.castShadow=true;o.receiveShadow=true;if(o.userData.web_roof)roofs.push(o);const ms=Array.isArray(o.material)?o.material:[o.material];for(const m of ms)realtimeMaterial(m,Math.min(4,renderer.capabilities.getMaxAnisotropy()));}});
  const batched=mergeStaticMeshes(model,meshes,rootOf);meshes=batched.meshes;batchReport=batched.report;preparePicking(meshes);for(const root of roots)localBounds.set(root,furnitureBounds(root));
@@ -126,7 +130,7 @@ async function load(){try{
  for(const data of manifest.lights||[]){const light=new THREE.PointLight(new THREE.Color(...data.color),0,6,2);light.position.set(...data.position).sub(center);light.userData.nightIntensity=Math.min(30,data.night_energy*.18);lamps.push(light);scene.add(light);}
  const size=bounds.getSize(new THREE.Vector3());const base=new THREE.Mesh(new THREE.BoxGeometry(size.x+.15,.11,size.z+.15),new THREE.MeshStandardMaterial({color:'#827462',roughness:.8}));base.position.y=-.085;base.receiveShadow=true;base.castShadow=true;scene.add(base);
  try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');applyTransforms(reconcileLayout(saved,roots.map(o=>o.userData.furniture_id)));if(saved?.source&&saved.source!==manifest.source_sha256)toast('模型已更新，已保留匹配家具的布局');}catch{toast('本机布局未能读取，已使用设计原位');}
- showRoof(false);setTime(13);controls.target.set(0,.4,0);camera.position.set(12,28,16).multiplyScalar(innerWidth<650?1.15:1);controls.update();$('#load-text').textContent='整理光线与材质…';$('#load-progress').style.width='88%';await renderer.compileAsync(scene,camera);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer.render();for(const lamp of lamps)lamp.visible=true;await renderer.compileAsync(scene,camera);renderer.render(scene,camera);composer.render();setTime(13);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer.render();ready=true;$('#load-progress').style.width='100%';$('#loading').classList.add('done');setTimeout(()=>$('#loading').hidden=true,600);invalidate(true);
+ showRoof(false);setTime(13);controls.target.set(0,.4,0);camera.position.set(12,28,16).multiplyScalar(innerWidth<650?1.15:1);controls.update();$('#load-text').textContent='整理光线与材质…';$('#load-progress').style.width='88%';await renderer.compileAsync(scene,camera);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();for(const lamp of lamps)lamp.visible=true;await renderer.compileAsync(scene,camera);renderer.render(scene,camera);composer?.render();setTime(13);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();ready=true;$('#load-progress').style.width='100%';$('#loading').classList.add('done');setTimeout(()=>$('#loading').hidden=true,600);invalidate(true);
  }catch(e){console.error(e);$('#load-text').textContent='载入失败，请通过“打开房屋展示”入口重新打开。';$('#loading h2').textContent='暂时没能打开房屋';}}
 const perf=createPerf(renderer);let frameHandle;
 function frame(now){frameHandle=requestAnimationFrame(frame);if(document.hidden||!ready)return;
@@ -134,8 +138,8 @@ function frame(now){frameHandle=requestAnimationFrame(frame);if(document.hidden|
  perf.drive(now,camera,controls,roots,invalidate);if(tween){const t=Math.min(1,(now-tween.start)/650),k=1-Math.pow(1-t,3);camera.position.lerpVectors(tween.from,tween.p,t===1?1:k);controls.target.lerpVectors(tween.targetFrom,tween.t,k);dirty=true;if(t===1)tween=null;}
  const moved=controls.update();if(moved)dirty=true;
  if(dirty||needsSharp&&!controlActive&&!drag&&!tween&&now-lastInteraction>300){const moving=controlActive||drag||tween||now-lastInteraction<300;renderer.info.reset();perf.begin(now);
-  if(shadowDirty&&(!moving||now-lastShadow>66)){renderer.shadowMap.needsUpdate=true;shadowDirty=false;lastShadow=now;}
-  if(moving){renderer.render(scene,camera);}else{composer.render();needsSharp=false;}
+  if(shadowDirty&&(!moving||now-lastShadow>(mobile?120:66))){renderer.shadowMap.needsUpdate=true;shadowDirty=false;lastShadow=now;}
+  if(moving||mobile){renderer.render(scene,camera);if(!moving)needsSharp=false;}else{composer.render();needsSharp=false;}
   perf.end();draws++;if(lastRender&&now-lastRender<200)renderIntervals.push(now-lastRender);if(renderIntervals.length>240)renderIntervals.shift();lastRender=now;dirty=false;
   if(new URLSearchParams(location.search).has('qa'))world.dataset.qa=JSON.stringify({state:window.hualinShowroom.getState(),diagnostics:window.hualinShowroom.getDiagnostics(),furniture:window.hualinShowroom.getFurnitureScreen()});
  }
@@ -143,4 +147,4 @@ function frame(now){frameHandle=requestAnimationFrame(frame);if(document.hidden|
 requestAnimationFrame(frame);load();
 setInterval(async()=>{if(!ready||document.hidden)return;try{const next=await(await fetch('./assets/manifest.json',{cache:'no-store'})).json();if(next.asset_sha256!==manifest.asset_sha256&&!$('#model-update')){const b=document.createElement('button');b.id='model-update';b.textContent='方案已更新 · 载入';b.style.cssText='font-size:11px;color:#97734f;padding:7px;border:1px solid #97734f44;border-radius:5px';b.onclick=()=>location.reload();$('.header-actions').prepend(b);}}catch{}},15000);
 // Read-only diagnostics for local QA. No user-facing engineering controls.
-window.hualinShowroom={getState:()=>({ready,editing,selected:selected?.userData.furniture_id,source:manifest?.source_sha256,transforms:ready?snapshot():{},roof:roofs.some(o=>o.visible),camera:camera.position.toArray(),target:controls.target.toArray(),storageOK,undo:undoStack.length}),getDiagnostics:()=>({draws,meshes:meshes.length,furniture:roots.length,triangles:renderer.info.render.triangles,calls:renderer.info.render.calls,intervalMedian:renderIntervals.length?[...renderIntervals].sort((a,b)=>a-b)[Math.floor(renderIntervals.length/2)]:null,pixelRatio:renderer.getPixelRatio(),batch:batchReport,activeLights:lamps.filter(l=>l.visible).length,pickMs,dragMs,physicalDisplayFPS:false}),getFurnitureScreen:()=>roots.map(o=>{const b=worldBounds(o),p=b.getCenter(new THREE.Vector3()).project(camera);return {id:o.userData.furniture_id,name:o.userData.web_source_name,x:(p.x+1)*innerWidth/2,y:(1-p.y)*innerHeight/2};})};
+window.hualinShowroom={getState:()=>({ready,editing,selected:selected?.userData.furniture_id,source:manifest?.source_sha256,transforms:ready?snapshot():{},roof:roofs.some(o=>o.visible),camera:camera.position.toArray(),target:controls.target.toArray(),storageOK,undo:undoStack.length}),getDiagnostics:()=>({draws,meshes:meshes.length,furniture:roots.length,triangles:renderer.info.render.triangles,calls:renderer.info.render.calls,intervalMedian:renderIntervals.length?[...renderIntervals].sort((a,b)=>a-b)[Math.floor(renderIntervals.length/2)]:null,mobile,pixelRatio:renderer.getPixelRatio(),batch:batchReport,activeLights:lamps.filter(l=>l.visible).length,pickMs,dragMs,physicalDisplayFPS:false}),getFurnitureScreen:()=>roots.map(o=>{const b=worldBounds(o),p=b.getCenter(new THREE.Vector3()).project(camera);return {id:o.userData.furniture_id,name:o.userData.web_source_name,x:(p.x+1)*innerWidth/2,y:(1-p.y)*innerHeight/2};})};
