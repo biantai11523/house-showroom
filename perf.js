@@ -2,12 +2,15 @@
 export function createPerf(renderer){
  const query=new URLSearchParams(location.search),enabled=query.has('bench')||query.has('measure'),scenario=query.get('bench');
  const gl=renderer.getContext(),ext=enabled?gl.getExtension('EXT_disjoint_timer_query_webgl2'):null;
- let active,begin=0,last=0,start=0,ended=false,renderStart=0,lastPublish=0;
- const pending=[],cpu=[],gpu=[],intervals=[],calls=[],triangles=[];
+ let active,begin=0,last=0,start=0,ended=false,renderStart=0,lastPublish=0,frameStart=0,frameNow=0;
+ const pending=[],cpu=[],gpu=[],intervals=[],calls=[],triangles=[],frameCpu=[];
  const stats=a=>{const s=[...a].sort((x,y)=>x-y);return {n:s.length,median:s[Math.floor(s.length*.5)]||0,p95:s[Math.floor(s.length*.95)]||0,max:s.at(-1)||0};};
- function publish(done=false){if(!enabled)return;document.querySelector('#world').dataset.perf=JSON.stringify({scenario:scenario||'manual',done,cpu:stats(cpu),gpu:stats(gpu),intervals:stats(intervals),calls:stats(calls),triangles:stats(triangles),pixelRatio:renderer.getPixelRatio(),size:[innerWidth,innerHeight],gpuTimer:!!ext,physicalDisplayFPS:false});}
+ function publish(done=false){if(!enabled)return;document.querySelector('#world').dataset.perf=JSON.stringify({scenario:scenario||'manual',done,cpu:stats(cpu),frameCpu:stats(frameCpu),gpu:stats(gpu),intervals:stats(intervals),calls:stats(calls),triangles:stats(triangles),pixelRatio:renderer.getPixelRatio(),size:[innerWidth,innerHeight],gpuTimer:!!ext,physicalDisplayFPS:false});}
  return {
   scenario,
+  get running(){return !!scenario&&!ended;},
+  beginFrame(now){if(!enabled||ended)return;frameNow=now;frameStart=performance.now();},
+  endFrame(){if(enabled&&!ended&&(!scenario||frameNow-start>1000))frameCpu.push(performance.now()-frameStart);},
   drive(now,camera,controls,roots,invalidate){
    if(!scenario||ended)return;
    if(!start){start=now;return;}

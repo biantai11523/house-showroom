@@ -1130,5 +1130,19 @@
     "sha256": "55ef4e943ba70304f22b735e30aa58a4514537dd3d9e02fa02951c0ef5bcafff",
     "source_asset_sha256": "7cf01cc53bf42c62ffd7f43bc6922d51d0fe1be6301b0ae90d35ee7994273f2a",
     "triangles": 788145
+  },
+  "gpu": {
+    "full": {
+      "file": "house-v24-gpu.glb",
+      "bytes": 70137168,
+      "sha256": "c50620056c4d0c8605c589133e1fc3acbbd49f69bb8feedc748f7e6efd679485",
+      "source_asset_sha256": "7cf01cc53bf42c62ffd7f43bc6922d51d0fe1be6301b0ae90d35ee7994273f2a"
+    },
+    "mobile": {
+      "file": "house-v24-mobile-gpu.glb",
+      "bytes": 55925056,
+      "sha256": "5c7b1a00a856d647b376885d04ddca46800947057d5e1e8719a13a00181cb2e4",
+      "source_asset_sha256": "55ef4e943ba70304f22b735e30aa58a4514537dd3d9e02fa02951c0ef5bcafff"
+    }
   }
 }
