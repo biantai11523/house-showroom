@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "edition": "R01 · 榫与弧",
+  "edition": "R01 / 02 · 榫与弧",
   "title": "榫与弧",
   "subtitle": "黑胡桃 · 墨褐皮 · 原麻",
   "initial_hour": 9.5,
-  "source": "华林1402_R01_榫与弧.blend",
-  "source_sha256": "25542f4575bd5f9838820b0bcbac4a14b9e8e59e8998772dd32dd09f29f63964",
+  "source": "华林1402_R01_02_榫与弧.blend",
+  "source_sha256": "9488a6c24739ae2c135942921cdebae145f837f4ccc0dbb7bc6e703bd78c8bbe",
   "asset_file": "house-r01.glb",
   "sun_date": "2026-11-18",
   "cameras": {
@@ -216,6 +216,19 @@
         -7.96
       ],
       "fov": 30.794877414433415
+    },
+    "细节｜儿童房衣柜": {
+      "position": [
+        3.84,
+        1.45,
+        -2.96
+      ],
+      "target": [
+        5.78,
+        1.23,
+        -3.84
+      ],
+      "fov": 63.8679910614085
     }
   },
   "lights": [
@@ -1071,26 +1084,26 @@
   "furniture_count": 9,
   "mesh_objects": 20,
   "asset_bytes": 45580020,
-  "asset_sha256": "9b8fc4163328b7d517206410396cbe14c6ed98f8312a8d2ffde88416f3625c3f",
+  "asset_sha256": "a15b8d9dc11f80774dd40c8972b871445e89fc1a2809eb2937e6e9c88cd2bfae",
   "triangles": 742615,
   "mobile": {
     "file": "house-r01-mobile.glb",
-    "bytes": 42670000,
-    "sha256": "85c47c1653f7ee079d24ad3b03d879711209a08012d2aa755ba42790e229222a",
-    "source_asset_sha256": "9b8fc4163328b7d517206410396cbe14c6ed98f8312a8d2ffde88416f3625c3f",
-    "triangles": 637223
+    "bytes": 42677104,
+    "sha256": "6f68667f5bd7b5b10a5c2d6ff6b5ffe9e07957db82840159838ce856c35e44ae",
+    "source_asset_sha256": "a15b8d9dc11f80774dd40c8972b871445e89fc1a2809eb2937e6e9c88cd2bfae",
+    "triangles": 637521
   },
-  "gallery_source_sha256": "25542f4575bd5f9838820b0bcbac4a14b9e8e59e8998772dd32dd09f29f63964",
+  "gallery_source_sha256": "9488a6c24739ae2c135942921cdebae145f837f4ccc0dbb7bc6e703bd78c8bbe",
   "gzip": {
     "house-r01.glb": {
       "file": "house-r01.glb.gz",
-      "bytes": 20067396,
-      "sha256": "22cbf4726096ee9fb8f96ab5109037854e4e1449631705dae4f6ea2f1bcd41a0"
+      "bytes": 20071706,
+      "sha256": "ec55cb3cc4a3f2554c1627b391c668ade7f334b122ec6b0a16abf584b9709aed"
     },
     "house-r01-mobile.glb": {
       "file": "house-r01-mobile.glb.gz",
-      "bytes": 19739006,
-      "sha256": "240089a5b450e29dcc9bdabf68b0de86aa689948627721c65a152de0d5bbeeeb"
+      "bytes": 19747181,
+      "sha256": "b26c4b28b92e578cc36ca3396e2964b9baf75e18ac5b2f3eb247cfecb78acb0c"
     }
   }
 }

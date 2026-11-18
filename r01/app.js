@@ -1,4 +1,5 @@
-import {createPerf} from './perf.js?v=04';
+import {createPerf} from './perf.js?v=clarity2';
+import {renderScales,motionDetail} from './display-resolution.js?v=2';
 import {createFramePump,deferControlUpdates} from './frame-runtime.js?v=04';
 import {realtimeMaterial,mergeStaticMeshes,preparePicking,furnitureBounds} from './scene-performance.js';
 import * as THREE from 'three';
@@ -24,12 +25,23 @@ function applyRoomLens(){
 }
 const mobile=new URLSearchParams(location.search).get('quality')==='mobile'||matchMedia('(pointer: coarse)').matches;
 document.body.classList.toggle('mobile-render',mobile);
-let renderRatio=Math.min(devicePixelRatio,mobile?1.25:1.5,Math.sqrt((mobile?750000:2400000)/(innerWidth*innerHeight)));
 const scene=new THREE.Scene();scene.background=new THREE.Color('#eeeae3');
 const camera=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,.05,200);
 const renderer=new THREE.WebGLRenderer({antialias:!mobile,powerPreference:'high-performance'});
-renderer.setPixelRatio(renderRatio);
-renderer.setSize(innerWidth,innerHeight);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
+const gl=renderer.getContext();
+const maxSide=Math.min(renderer.capabilities.maxTextureSize,gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),...gl.getParameter(gl.MAX_VIEWPORT_DIMS));
+const detail=motionDetail();
+let displayDpr=devicePixelRatio;
+let scales=renderScales(innerWidth,innerHeight,displayDpr,mobile,maxSide);
+let bufferWidth=0,bufferHeight=0,bufferRatio=0,bufferChanges=0,qualityPhase='motion';
+function applyDrawScale(ratio){
+ const w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);
+ if(bufferWidth===w&&bufferHeight===h&&bufferRatio===ratio)return;
+ renderer.setDrawingBufferSize(w,h,ratio);
+ bufferWidth=w;bufferHeight=h;bufferRatio=ratio;bufferChanges++;
+}
+applyDrawScale(scales.base);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
 renderer.info.autoReset=false;
 renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.shadowMap.autoUpdate=false;
 world.appendChild(renderer.domElement);
@@ -43,7 +55,25 @@ const fill=new THREE.DirectionalLight('#dce5ed',1);fill.position.set(-10,12,8);s
 const pmrem=new THREE.PMREMGenerator(renderer);const env=new RoomEnvironment();scene.environment=pmrem.fromScene(env,.04).texture;env.dispose();pmrem.dispose();scene.environmentIntensity=.4;
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:'#e9e4db',roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.y=-.16;ground.receiveShadow=true;scene.add(ground);
 const composer=mobile?null:new EffectComposer(renderer);
-if(composer){composer.addPass(new RenderPass(scene,camera));const ao=new GTAOPass(scene,camera,innerWidth,innerHeight);ao.output=GTAOPass.OUTPUT.Default;ao.updateGtaoMaterial({radius:.22,distanceExponent:1,thickness:.3,distanceFallOff:1,scale:1,samples:16});ao.blendIntensity=.35;composer.addPass(ao);composer.addPass(new OutputPass());composer.addPass(new SMAAPass());}
+const ao=composer?new GTAOPass(scene,camera,innerWidth,innerHeight):null;
+let postWidth=0,postHeight=0;
+function fitPostTargets(){
+ if(!composer)return;
+ const {width,height}=renderer.domElement;
+ if(postWidth===width&&postHeight===height)return;
+ composer.setSize(width,height);
+ // Keep full-resolution colour and SMAA. The softer contact term has its own target.
+ ao.setSize(Math.min(width,Math.max(1,Math.floor(innerWidth*scales.base))),
+            Math.min(height,Math.max(1,Math.floor(innerHeight*scales.base))));
+ postWidth=width;postHeight=height;
+}
+if(composer){
+ composer.setPixelRatio(1);
+ composer.addPass(new RenderPass(scene,camera));
+ ao.output=GTAOPass.OUTPUT.Default;ao.updateGtaoMaterial({radius:.22,distanceExponent:1,thickness:.3,distanceFallOff:1,scale:1,samples:16});
+ ao.blendIntensity=.35;composer.addPass(ao);composer.addPass(new OutputPass());composer.addPass(new SMAAPass());
+ fitPostTargets();
+}
 let model,manifest,center=new THREE.Vector3(),bounds,roots=[],meshes=[],roofs=[],walls=[],lamps=[],ready=false,editing=false,selected=null,drag=null,tween=null,dirty=true,lastInteraction=performance.now(),draws=0,renderIntervals=[],lastRender=0,needsSharp=true;
 const original=new Map(),undoStack=[];let storageOK=true;
 const localBounds=new Map();let controlActive=false,shadowDirty=true,lastShadow=0,pendingPointer=null,batchReport=null,pickMs=0,dragMs=0;
@@ -72,7 +102,7 @@ function showRoof(value){roofs.forEach(o=>o.visible=value);document.body.classLi
 const presets={living:{target:[8.0,1.1,-3.1],position:[8.1,1.7,-.7]},dining:{target:[8.5,1.1,-7.2],position:[10.4,1.75,-5.25]},study:{target:[3.4,1.1,-7.8],position:[5.6,1.7,-6.2]},bedroom:{target:[10.6,1.0,-9.3],position:[8.9,1.6,-8.0]}};
 function goView(name){if(!ready)return;let p,t;
  if(name==='home'){showRoof(false);t=new THREE.Vector3(0,.4,0);p=new THREE.Vector3(12,28,16).multiplyScalar(homeScale());controls.maxPolarAngle=Math.PI*.485;roomFov=null;}
- else{if(editing)setEditing(false);showRoof(true);const labels={living:'客厅',dining:'餐厨',study:'书房',bedroom:'主卧'};const cameraKey={entry:'细节｜玄关拱窗',espresso:'细节｜餐边咖啡吧'}[name]||'呈现｜室内'+labels[name];const v=manifest.cameras?.[cameraKey]||presets[name];p=new THREE.Vector3(...v.position).sub(center);t=new THREE.Vector3(...v.target).sub(center);controls.maxPolarAngle=Math.PI*.82;roomFov=manifest.asset_file&&v.fov?v.fov:null;}
+ else{if(editing)setEditing(false);showRoof(true);const labels={living:'客厅',dining:'餐厨',study:'书房',bedroom:'主卧'};const cameraKey={entry:'细节｜玄关拱窗',espresso:'细节｜餐边咖啡吧',child:'细节｜儿童房衣柜'}[name]||'呈现｜室内'+labels[name];const v=manifest.cameras?.[cameraKey]||presets[name];p=new THREE.Vector3(...v.position).sub(center);t=new THREE.Vector3(...v.target).sub(center);controls.maxPolarAngle=Math.PI*.82;roomFov=manifest.asset_file&&v.fov?v.fov:null;}
  controls.minDistance=manifest.asset_file && name!=='home' ? 0.18 : 1.5;
  applyRoomLens();
  tween={start:performance.now(),from:camera.position.clone(),targetFrom:controls.target.clone(),p,t};$('.view.active')?.classList.remove('active');$(`[data-view="${name}"]`)?.classList.add('active');invalidate();}
@@ -131,11 +161,28 @@ window.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA'].includes(e.target.
 function setTime(hour){$('#clock').textContent=hourLabel(hour);const d=new Date(new Date((manifest?.sun_date||'2026-09-30')+'T00:00:00+08:00').getTime()+hour*3600000);const p=SunCalc.getPosition(d,26.0745,119.2965);const a=p.azimuth*Math.PI/180,h=p.altitude*Math.PI/180;
  sun.position.set(Math.sin(a)*Math.cos(h)*25,Math.sin(h)*25,-Math.cos(a)*Math.cos(h)*25);sun.target.position.set(0,0,0);const day=THREE.MathUtils.smoothstep(p.altitude,-4,15);sun.intensity=Math.max(0,day*3.2);sun.color.setHSL(.09,.15+(1-day)*.35,.85);hemi.intensity=.7+day*1.5;fill.intensity=.45+day*.55;scene.environmentIntensity=.3+day*.15;
  if(manifest?.asset_file){hemi.intensity=.34+day*1.13;fill.intensity=.18+day*.46;scene.environmentIntensity=.24+day*.2;}
- for(const light of lamps){light.intensity=light.userData.nightIntensity*(1-day);light.visible=day<.999;}
+ const nightLamps=day<.999;
+ if(lamps.length&&lamps[0].visible!==nightLamps)detail.reset();
+ for(const light of lamps){light.intensity=light.userData.nightIntensity*(1-day);light.visible=nightLamps;}
  scene.background.set('#eeeae3').lerp(new THREE.Color('#b4b4b8'),1-day);ground.material.color.copy(scene.background);document.body.classList.toggle('night',day<.2);sun.updateMatrixWorld();sun.target.updateMatrixWorld();sceneSyncs++;invalidate(true);
 }
 $('#time').oninput=e=>{if(!logicOptimized)return setTime(Number(e.target.value));queuedTime=Number(e.target.value);$('#clock').textContent=hourLabel(queuedTime);pump?.wake();};
-function resize(){camera.aspect=innerWidth/innerHeight;applyRoomLens();fitOrbitRange();renderRatio=Math.min(devicePixelRatio,mobile?1.25:1.5,Math.sqrt((mobile?750000:2400000)/(innerWidth*innerHeight)));renderer.setPixelRatio(renderRatio);renderer.setSize(innerWidth,innerHeight);composer?.setPixelRatio(renderRatio);composer?.setSize(innerWidth,innerHeight);invalidate();}window.addEventListener('resize',resize);
+let densityQuery=null;
+function watchDensity(){
+ densityQuery?.removeEventListener('change',resize);
+ densityQuery=matchMedia('(resolution: '+displayDpr+'dppx)');
+ densityQuery.addEventListener('change',resize);
+}
+function resize(){
+ camera.aspect=innerWidth/Math.max(1,innerHeight);applyRoomLens();fitOrbitRange();
+ if(displayDpr!==devicePixelRatio){displayDpr=devicePixelRatio;watchDensity();}
+ scales=renderScales(innerWidth,innerHeight,displayDpr,mobile,maxSide);
+ detail.reset();invalidate();
+}
+function syncDisplayDensity(){if(displayDpr!==devicePixelRatio)resize();}
+window.addEventListener('resize',resize);
+window.addEventListener('focus',syncDisplayDensity);
+watchDensity();
 async function loadModelFile(file,digest,bytes){
  const transport=manifest.gzip?.[file];
  const url='./assets/'+(transport?.file||file)+'?v='+(transport?.sha256||digest);
@@ -164,12 +211,12 @@ async function load(){try{
  manifest=await (await fetch('./assets/manifest.json',{cache:'no-cache'})).json();
  if(manifest.asset_file)layoutStorageKey=STORAGE_KEY+'-'+manifest.asset_file;
  const initialHour=manifest.initial_hour??13;$('#time').value=initialHour;
- for(const [id,label,key] of [['espresso','咖啡区','细节｜餐边咖啡吧'],['entry','玄关','细节｜玄关拱窗']]){
+ for(const [id,label,key] of [['child','儿童房','细节｜儿童房衣柜'],['espresso','咖啡区','细节｜餐边咖啡吧'],['entry','玄关','细节｜玄关拱窗']]){
   if(!manifest.cameras?.[key])continue;
   const button=document.createElement('button');button.className='view';button.dataset.view=id;button.textContent=label;button.onclick=()=>goView(id);$('.view-line').before(button);
  }
  if(manifest.asset_file)document.body.classList.add('new-scheme');
- if(manifest.gallery_source_sha256===manifest.source_sha256){const album=document.createElement('a');album.className='render-album';album.href='./assets/gallery/index.html';album.textContent='效果图';$('.header-actions').prepend(album);}
+ if(manifest.gallery_source_sha256===manifest.source_sha256){const album=document.createElement('a');album.className='render-album';album.href='./assets/gallery/index.html?v='+manifest.source_sha256.slice(0,12);album.textContent='效果图';$('.header-actions').prepend(album);}
  if(manifest.edition){$('.edition').textContent=manifest.edition;$('.intro .eyebrow').textContent='华林 · 2号楼 1402';$('.intro h1').textContent=manifest.title;$('.intro p').textContent=manifest.subtitle;document.title='华林 1402 · '+manifest.title;}
  let asset=mobile&&manifest.mobile?.source_asset_sha256===manifest.asset_sha256?manifest.mobile:null;
  const ordered=manifest.gpu?.[asset?'mobile':'full'];if(logicOptimized&&ordered?.source_asset_sha256===(asset?.sha256||manifest.asset_sha256))asset=ordered;
@@ -184,25 +231,40 @@ async function load(){try{
  try{const saved=JSON.parse(localStorage.getItem(layoutStorageKey)||'null');applyTransforms(reconcileLayout(saved,roots.map(o=>o.userData.furniture_id)));if(saved?.source&&saved.source!==manifest.source_sha256)toast('模型已更新，已保留匹配家具的布局');}catch{toast('本机布局未能读取，已使用设计原位');}
  showRoof(false);setTime(initialHour);controls.target.set(0,.4,0);camera.position.set(12,28,16).multiplyScalar(homeScale());updateControls();$('#load-text').textContent='整理光线与材质…';$('#load-progress').style.width='88%';await renderer.compileAsync(scene,camera);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();for(const lamp of lamps)lamp.visible=true;await renderer.compileAsync(scene,camera);renderer.render(scene,camera);composer?.render();setTime(initialHour);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();if(logicOptimized){model.traverse(o=>{if(!roots.includes(o)){o.updateMatrix();o.matrixAutoUpdate=false;}});scene.updateMatrixWorld(true);scene.matrixWorldAutoUpdate=false;}ready=true;$('#load-progress').style.width='100%';$('#loading').classList.add('done');setTimeout(()=>$('#loading').hidden=true,600);invalidate(true);const firstView=query.get('view');if(manifest.asset_file&&firstView&&document.querySelector('.view[data-view="'+CSS.escape(firstView)+'"]'))goView(firstView);
  }catch(e){console.error(e);$('#load-text').textContent='载入失败，请通过“打开房屋展示”入口重新打开。';$('#loading h2').textContent='暂时没能打开房屋';}}
-const perf=createPerf(renderer);
+const perf=createPerf(renderer,(ms,ratio,now)=>detail.observe(ms,ratio,now,scales));
 function frame(now){if(document.hidden||!ready)return false;
+ syncDisplayDensity();
  perf.beginFrame(now);
  if(queuedTime!==null){setTime(queuedTime);queuedTime=null;}
  if(pendingPointer&&drag){const e=pendingPointer;pendingPointer=null;moveFurniture(e);}
  perf.drive(now,camera,controls,roots,invalidate);if(tween){const t=Math.min(1,(now-tween.start)/650),k=1-Math.pow(1-t,3);camera.position.lerpVectors(tween.from,tween.p,t===1?1:k);controls.target.lerpVectors(tween.targetFrom,tween.t,k);dirty=true;if(t===1)tween=null;}
  const moved=updateControls();if(moved)dirty=true;
- if(dirty||needsSharp&&!controlActive&&!drag&&!tween&&now-lastInteraction>300){const moving=controlActive||drag||tween||now-lastInteraction<300;renderer.info.reset();perf.begin(now);
+ if(dirty||needsSharp&&!controlActive&&!drag&&!tween&&now-lastInteraction>300){
+  const moving=!!(controlActive||drag||tween||now-lastInteraction<300);
+  qualityPhase=moving?'motion':'still';
+  if(manifest.asset_file){
+   if(moving)detail.observeFrame(now,scales,!perf.gpuTimer);else detail.pause();
+  }
+  const ratio=manifest.asset_file?(moving?detail.ratio(scales):scales.still):scales.base;
+  applyDrawScale(ratio);
+  if(!moving)fitPostTargets();
+  renderer.info.reset();perf.begin(now,moving&&manifest.asset_file?ratio:0);
   if(shadowDirty&&(!moving||now-lastShadow>(mobile?120:66))){renderer.shadowMap.needsUpdate=true;shadowDirty=false;lastShadow=now;}
   if(moving||mobile){renderer.render(scene,camera);if(!moving)needsSharp=false;}else{composer.render();needsSharp=false;}
   perf.end();draws++;if(lastRender&&now-lastRender<200)renderIntervals.push(now-lastRender);if(renderIntervals.length>240)renderIntervals.shift();lastRender=now;dirty=false;
   if(qa)world.dataset.qa=JSON.stringify({state:window.hualinShowroom.getState(),diagnostics:window.hualinShowroom.getDiagnostics(),furniture:window.hualinShowroom.getFurnitureScreen()});
  }
  perf.endFrame();
- return !logicOptimized||perf.running||!!tween||!!pendingPointer||!!controlBatch?.pending()||!!(controls.enableDamping&&moved);
+ const running=!logicOptimized||perf.running||!!tween||!!pendingPointer||!!controlBatch?.pending()||!!(controls.enableDamping&&moved);
+ if(!running&&needsSharp&&!controlActive&&!drag){
+  // A queued frame can carry an earlier rAF timestamp than the settle timer.
+  pump.settle(Math.max(1,lastInteraction+310-performance.now()));
+ }
+ return running;
 }
 pump=createFramePump(frame);pump.wake();load();
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pump.pause();else invalidate();});
 if(qa)setInterval(()=>{world.dataset.runtime=JSON.stringify({pump:pump.stats(),controls:controlBatch?.stats(),sceneSyncs});},500);
-setInterval(async()=>{if(!ready||document.hidden)return;try{const next=await(await fetch('./assets/manifest.json',{cache:'no-store'})).json();if(next.asset_sha256!==manifest.asset_sha256&&!$('#model-update')){const b=document.createElement('button');b.id='model-update';b.textContent='方案已更新 · 载入';b.style.cssText='font-size:11px;color:#97734f;padding:7px;border:1px solid #97734f44;border-radius:5px';b.onclick=()=>location.reload();$('.header-actions').prepend(b);}}catch{}},15000);
+setInterval(async()=>{if(!ready||document.hidden)return;syncDisplayDensity();try{const next=await(await fetch('./assets/manifest.json',{cache:'no-store'})).json();if(next.asset_sha256!==manifest.asset_sha256&&!$('#model-update')){const b=document.createElement('button');b.id='model-update';b.textContent='方案已更新 · 载入';b.style.cssText='font-size:11px;color:#97734f;padding:7px;border:1px solid #97734f44;border-radius:5px';b.onclick=()=>location.reload();$('.header-actions').prepend(b);}}catch{}},15000);
 // Read-only diagnostics for local QA. No user-facing engineering controls.
-window.hualinShowroom={getState:()=>({ready,editing,selected:selected?.userData.furniture_id,source:manifest?.source_sha256,transforms:ready?snapshot():{},roof:roofs.some(o=>o.visible),camera:camera.position.toArray(),target:controls.target.toArray(),storageOK,undo:undoStack.length}),getDiagnostics:()=>({draws,meshes:meshes.length,furniture:roots.length,triangles:renderer.info.render.triangles,calls:renderer.info.render.calls,intervalMedian:renderIntervals.length?[...renderIntervals].sort((a,b)=>a-b)[Math.floor(renderIntervals.length/2)]:null,logicOptimized,pump:pump?.stats(),controls:controlBatch?.stats(),sceneSyncs,mobile,pixelRatio:renderer.getPixelRatio(),batch:batchReport,activeLights:lamps.filter(l=>l.visible).length,pickMs,dragMs,physicalDisplayFPS:false}),getFurnitureScreen:()=>roots.map(o=>{const b=worldBounds(o),p=b.getCenter(new THREE.Vector3()).project(camera);return {id:o.userData.furniture_id,name:o.userData.web_source_name,x:(p.x+1)*innerWidth/2,y:(1-p.y)*innerHeight/2};})};
+window.hualinShowroom={getState:()=>({ready,editing,selected:selected?.userData.furniture_id,source:manifest?.source_sha256,transforms:ready?snapshot():{},roof:roofs.some(o=>o.visible),camera:camera.position.toArray(),target:controls.target.toArray(),storageOK,undo:undoStack.length}),getDiagnostics:()=>({draws,meshes:meshes.length,furniture:roots.length,triangles:renderer.info.render.triangles,calls:renderer.info.render.calls,intervalMedian:renderIntervals.length?[...renderIntervals].sort((a,b)=>a-b)[Math.floor(renderIntervals.length/2)]:null,logicOptimized,pump:pump?.stats(),controls:controlBatch?.stats(),sceneSyncs,mobile,pixelRatio:renderer.getPixelRatio(),resolution:{phase:qualityPhase,buffer:[renderer.domElement.width,renderer.domElement.height],base:scales.base,motion:detail.ratio(scales),still:scales.still,bufferChanges,post:composer?[postWidth,postHeight]:null,occlusion:ao?[ao.width,ao.height]:null},batch:batchReport,activeLights:lamps.filter(l=>l.visible).length,pickMs,dragMs,physicalDisplayFPS:false}),getFurnitureScreen:()=>roots.map(o=>{const b=worldBounds(o),p=b.getCenter(new THREE.Vector3()).project(camera);return {id:o.userData.furniture_id,name:o.userData.web_source_name,x:(p.x+1)*innerWidth/2,y:(1-p.y)*innerHeight/2};})};
