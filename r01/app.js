@@ -17,7 +17,7 @@ const $=s=>document.querySelector(s),world=$('#world');
 const query=new URLSearchParams(location.search),logicOptimized=query.get('logic')!=='baseline',qa=query.has('qa');
 let pump=null,queuedTime=null,sceneSyncs=0;
 let layoutStorageKey=STORAGE_KEY;
-let roomFov=null;
+let manifest,roomFov=null;
 function applyRoomLens(){
  const scale=Math.max(1,1.52/camera.aspect);
  camera.fov=roomFov===null?35:Math.min(113,THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(roomFov/2))*scale)));
@@ -47,7 +47,19 @@ renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;rende
 world.appendChild(renderer.domElement);
 const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=!mobile;controls.dampingFactor=.18;controls.rotateSpeed=.6;controls.zoomSpeed=.9;
 function homeScale(){return Math.max(1,1/camera.aspect);}
-function fitOrbitRange(){controls.maxDistance=Math.max(55,35*homeScale()+2);}
+const homeTarget=new THREE.Vector3(0,.4,0);
+function homeEye(){
+ const eye=new THREE.Vector3(12,28,16);
+ if(!manifest?.asset_file)return eye.multiplyScalar(homeScale());
+ return eye.sub(homeTarget).multiplyScalar(homeScale()).add(homeTarget);
+}
+function fitOrbitRange(){
+ controls.maxDistance=manifest?.asset_file?55*homeScale():Math.max(55,35*homeScale()+2);
+ if(manifest?.asset_file){
+  const far=Math.max(200,controls.maxDistance+25);
+  if(camera.far!==far){camera.far=far;camera.updateProjectionMatrix();}
+ }
+}
 controls.minDistance=1.5;fitOrbitRange();controls.maxPolarAngle=Math.PI*.485;controls.minPolarAngle=.08;controls.screenSpacePanning=true;
 const hemi=new THREE.HemisphereLight('#fff9ed','#998a72',2);scene.add(hemi);
 const sun=new THREE.DirectionalLight('#ffdfaf',3);sun.castShadow=true;sun.shadow.mapSize.set(mobile?1024:2048,mobile?1024:2048);Object.assign(sun.shadow.camera,{left:-12,right:12,top:12,bottom:-12,near:1,far:65});sun.shadow.bias=-.0003;sun.shadow.normalBias=.025;sun.shadow.radius=2;scene.add(sun,sun.target);
@@ -74,7 +86,7 @@ if(composer){
  ao.blendIntensity=.35;composer.addPass(ao);composer.addPass(new OutputPass());composer.addPass(new SMAAPass());
  fitPostTargets();
 }
-let model,manifest,center=new THREE.Vector3(),bounds,roots=[],meshes=[],roofs=[],walls=[],lamps=[],ready=false,editing=false,selected=null,drag=null,tween=null,dirty=true,lastInteraction=performance.now(),draws=0,renderIntervals=[],lastRender=0,needsSharp=true;
+let model,center=new THREE.Vector3(),bounds,roots=[],meshes=[],roofs=[],walls=[],lamps=[],ready=false,editing=false,selected=null,drag=null,tween=null,dirty=true,lastInteraction=performance.now(),draws=0,renderIntervals=[],lastRender=0,needsSharp=true;
 const original=new Map(),undoStack=[];let storageOK=true;
 const localBounds=new Map();let controlActive=false,shadowDirty=true,lastShadow=0,pendingPointer=null,batchReport=null,pickMs=0,dragMs=0;
 const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0),hitPoint=new THREE.Vector3();
@@ -101,11 +113,11 @@ function setEditing(value){if(drag)finishDrag(true);editing=value;document.body.
 function showRoof(value){roofs.forEach(o=>o.visible=value);document.body.classList.toggle('interior',value);$('#scene-status').textContent=value?'室内近看 · 完整封顶':'真实空间 · 完整墙体';invalidate(true);}
 const presets={living:{target:[8.0,1.1,-3.1],position:[8.1,1.7,-.7]},dining:{target:[8.5,1.1,-7.2],position:[10.4,1.75,-5.25]},study:{target:[3.4,1.1,-7.8],position:[5.6,1.7,-6.2]},bedroom:{target:[10.6,1.0,-9.3],position:[8.9,1.6,-8.0]}};
 function goView(name){if(!ready)return;let p,t;
- if(name==='home'){showRoof(false);t=new THREE.Vector3(0,.4,0);p=new THREE.Vector3(12,28,16).multiplyScalar(homeScale());controls.maxPolarAngle=Math.PI*.485;roomFov=null;}
+ if(name==='home'){showRoof(false);t=homeTarget.clone();p=homeEye();controls.maxPolarAngle=Math.PI*.485;roomFov=null;}
  else{if(editing)setEditing(false);showRoof(true);const labels={living:'客厅',dining:'餐厨',study:'书房',bedroom:'主卧'};const cameraKey={entry:'细节｜玄关拱窗',espresso:'细节｜餐边咖啡吧',child:'细节｜儿童房衣柜'}[name]||'呈现｜室内'+labels[name];const v=manifest.cameras?.[cameraKey]||presets[name];p=new THREE.Vector3(...v.position).sub(center);t=new THREE.Vector3(...v.target).sub(center);controls.maxPolarAngle=Math.PI*.82;roomFov=manifest.asset_file&&v.fov?v.fov:null;}
  controls.minDistance=manifest.asset_file && name!=='home' ? 0.18 : 1.5;
  applyRoomLens();
- tween={start:performance.now(),from:camera.position.clone(),targetFrom:controls.target.clone(),p,t};$('.view.active')?.classList.remove('active');$(`[data-view="${name}"]`)?.classList.add('active');invalidate();}
+ tween={start:performance.now(),duration:650,from:camera.position.clone(),targetFrom:controls.target.clone(),p,t};$('.view.active')?.classList.remove('active');$(`[data-view="${name}"]`)?.classList.add('active');invalidate();}
 controls.addEventListener('start',()=>{controlActive=true;tween=null;invalidate();});controls.addEventListener('end',()=>{controlActive=false;invalidate();});controls.addEventListener('change',()=>invalidate());
 function setRay(e){const r=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(pointer,camera);}
 function floorPoint(e){setRay(e);return ray.ray.intersectPlane(plane,hitPoint);}
@@ -174,7 +186,20 @@ function watchDensity(){
  densityQuery.addEventListener('change',resize);
 }
 function resize(){
+ const oldScale=homeScale();
  camera.aspect=innerWidth/Math.max(1,innerHeight);applyRoomLens();fitOrbitRange();
+ const newScale=homeScale();
+ if(manifest?.asset_file&&roomFov===null&&oldScale!==newScale){
+  if(tween){
+   // Preserve the current pose and the original arrival time when resizing mid-flight.
+   const now=performance.now();
+   tween.duration=Math.max(1,tween.start+tween.duration-now);
+   tween.start=now;tween.from.copy(camera.position);tween.targetFrom.copy(controls.target);
+   tween.p.copy(homeEye());
+  }else{
+   camera.position.sub(controls.target).multiplyScalar(newScale/oldScale).add(controls.target);
+  }
+ }
  if(displayDpr!==devicePixelRatio){displayDpr=devicePixelRatio;watchDensity();}
  scales=renderScales(innerWidth,innerHeight,displayDpr,mobile,maxSide);
  detail.reset();invalidate();
@@ -209,6 +234,7 @@ async function loadModelFile(file,digest,bytes){
 }
 async function load(){try{
  manifest=await (await fetch('./assets/manifest.json',{cache:'no-cache'})).json();
+ fitOrbitRange();
  if(manifest.asset_file)layoutStorageKey=STORAGE_KEY+'-'+manifest.asset_file;
  const initialHour=manifest.initial_hour??13;$('#time').value=initialHour;
  for(const [id,label,key] of [['child','儿童房','细节｜儿童房衣柜'],['espresso','咖啡区','细节｜餐边咖啡吧'],['entry','玄关','细节｜玄关拱窗']]){
@@ -229,7 +255,7 @@ async function load(){try{
  for(const data of manifest.lights||[]){const light=new THREE.PointLight(new THREE.Color(...data.color),0,6,2);light.position.set(...data.position).sub(center);light.userData.nightIntensity=Math.min(30,data.night_energy*.18);lamps.push(light);scene.add(light);}
  if(!manifest.asset_file){const size=bounds.getSize(new THREE.Vector3());const base=new THREE.Mesh(new THREE.BoxGeometry(size.x+.15,.11,size.z+.15),new THREE.MeshStandardMaterial({color:'#827462',roughness:.8}));base.position.y=-.085;base.receiveShadow=true;base.castShadow=true;scene.add(base);}
  try{const saved=JSON.parse(localStorage.getItem(layoutStorageKey)||'null');applyTransforms(reconcileLayout(saved,roots.map(o=>o.userData.furniture_id)));if(saved?.source&&saved.source!==manifest.source_sha256)toast('模型已更新，已保留匹配家具的布局');}catch{toast('本机布局未能读取，已使用设计原位');}
- showRoof(false);setTime(initialHour);controls.target.set(0,.4,0);camera.position.set(12,28,16).multiplyScalar(homeScale());updateControls();$('#load-text').textContent='整理光线与材质…';$('#load-progress').style.width='88%';await renderer.compileAsync(scene,camera);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();for(const lamp of lamps)lamp.visible=true;await renderer.compileAsync(scene,camera);renderer.render(scene,camera);composer?.render();setTime(initialHour);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();if(logicOptimized){model.traverse(o=>{if(!roots.includes(o)){o.updateMatrix();o.matrixAutoUpdate=false;}});scene.updateMatrixWorld(true);scene.matrixWorldAutoUpdate=false;}ready=true;$('#load-progress').style.width='100%';$('#loading').classList.add('done');setTimeout(()=>$('#loading').hidden=true,600);invalidate(true);const firstView=query.get('view');if(manifest.asset_file&&firstView&&document.querySelector('.view[data-view="'+CSS.escape(firstView)+'"]'))goView(firstView);
+ showRoof(false);setTime(initialHour);controls.target.copy(homeTarget);camera.position.copy(homeEye());updateControls();$('#load-text').textContent='整理光线与材质…';$('#load-progress').style.width='88%';await renderer.compileAsync(scene,camera);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();for(const lamp of lamps)lamp.visible=true;await renderer.compileAsync(scene,camera);renderer.render(scene,camera);composer?.render();setTime(initialHour);renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);composer?.render();if(logicOptimized){model.traverse(o=>{if(!roots.includes(o)){o.updateMatrix();o.matrixAutoUpdate=false;}});scene.updateMatrixWorld(true);scene.matrixWorldAutoUpdate=false;}ready=true;$('#load-progress').style.width='100%';$('#loading').classList.add('done');setTimeout(()=>$('#loading').hidden=true,600);invalidate(true);const firstView=query.get('view');if(manifest.asset_file&&firstView&&document.querySelector('.view[data-view="'+CSS.escape(firstView)+'"]'))goView(firstView);
  }catch(e){console.error(e);$('#load-text').textContent='载入失败，请通过“打开房屋展示”入口重新打开。';$('#loading h2').textContent='暂时没能打开房屋';}}
 const perf=createPerf(renderer,(ms,ratio,now)=>detail.observe(ms,ratio,now,scales));
 function frame(now){if(document.hidden||!ready)return false;
@@ -237,7 +263,7 @@ function frame(now){if(document.hidden||!ready)return false;
  perf.beginFrame(now);
  if(queuedTime!==null){setTime(queuedTime);queuedTime=null;}
  if(pendingPointer&&drag){const e=pendingPointer;pendingPointer=null;moveFurniture(e);}
- perf.drive(now,camera,controls,roots,invalidate);if(tween){const t=Math.min(1,(now-tween.start)/650),k=1-Math.pow(1-t,3);camera.position.lerpVectors(tween.from,tween.p,t===1?1:k);controls.target.lerpVectors(tween.targetFrom,tween.t,k);dirty=true;if(t===1)tween=null;}
+ perf.drive(now,camera,controls,roots,invalidate);if(tween){const t=THREE.MathUtils.clamp((now-tween.start)/tween.duration,0,1),k=1-Math.pow(1-t,3);camera.position.lerpVectors(tween.from,tween.p,t===1?1:k);controls.target.lerpVectors(tween.targetFrom,tween.t,k);dirty=true;if(t===1)tween=null;}
  const moved=updateControls();if(moved)dirty=true;
  if(dirty||needsSharp&&!controlActive&&!drag&&!tween&&now-lastInteraction>300){
   const moving=!!(controlActive||drag||tween||now-lastInteraction<300);
